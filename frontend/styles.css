@@ -36,8 +36,15 @@ body {
 }
 
 .unit.active-unit {
-  border: 1px solid #5865f2;
-  box-shadow: 0 0 0 1px #5865f2 inset;
+  background: #34373d;
+  border: 3px solid #5865f2;
+}
+
+.selected-label {
+  margin-top: 6px;
+  font-size: 11px;
+  color: #5865f2;
+  font-weight: bold;
 }
 
 .main {
@@ -204,6 +211,6 @@ body {
 }
 
 .priority-low {
-  background: #455a64;
+  background: #2e7d32;
   color: #ffffff;
 }

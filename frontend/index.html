@@ -2,286 +2,66 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ARIS Dashboard</title>
-  <style>
-    body {
-      margin: 0;
-      font-family: Arial, sans-serif;
-      background: #313338;
-      color: white;
-    }
-
-    .layout {
-      display: flex;
-      min-height: 100vh;
-    }
-
-    .sidebar {
-      width: 240px;
-      background: #1e1f22;
-      padding: 16px;
-      border-right: 1px solid #2b2d31;
-    }
-
-    .sidebar h2 {
-      margin-top: 0;
-    }
-
-    .unit {
-      background: #2b2d31;
-      padding: 10px;
-      border-radius: 10px;
-      margin-bottom: 10px;
-    }
-
-    .main {
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-    }
-
-    .topbar {
-      display: flex;
-      gap: 12px;
-      padding: 16px;
-      background: #2b2d31;
-      border-bottom: 1px solid #1e1f22;
-    }
-
-    .card {
-      background: #1e1f22;
-      padding: 12px 16px;
-      border-radius: 12px;
-      min-width: 150px;
-    }
-
-    .card small {
-      color: #b5bac1;
-      display: block;
-      margin-bottom: 6px;
-    }
-
-    .content {
-      display: flex;
-      flex: 1;
-    }
-
-    .feed {
-      flex: 1;
-      padding: 16px;
-    }
-
-    .feed h2 {
-      margin-top: 0;
-    }
-
-    .command-card {
-      background: #2b2d31;
-      padding: 14px;
-      border-radius: 12px;
-      margin-bottom: 12px;
-      border-left: 4px solid #5865f2;
-    }
-
-    .row {
-      display: flex;
-      justify-content: space-between;
-    }
-
-    .detail {
-      width: 300px;
-      background: #1e1f22;
-      padding: 16px;
-      border-left: 1px solid #2b2d31;
-    }
-
-    .detail-card {
-      background: #2b2d31;
-      padding: 12px;
-      border-radius: 10px;
-      margin-bottom: 12px;
-    }
-
-    .online { color: #57f287; }
-    .offline { color: #ed4245; }
-    .unstable { color: #faa61a; }
-
-    .high {
-      background: #ed4245;
-      padding: 4px 8px;
-      border-radius: 8px;
-      font-size: 12px;
-    }
-
-    .medium {
-      background: #faa61a;
-      padding: 4px 8px;
-      border-radius: 8px;
-      font-size: 12px;
-      color: black;
-    }
-
-    .low {
-      background: #57f287;
-      padding: 4px 8px;
-      border-radius: 8px;
-      font-size: 12px;
-      color: black;
-    }
-  </style>
+  <link rel="stylesheet" href="styles.css" />
 </head>
+
 <body>
   <div class="layout">
-    <div class="sidebar">
+    <aside class="sidebar">
       <h2>Units</h2>
       <div id="units"></div>
-    </div>
+    </aside>
 
-    <div class="main">
-      <div class="topbar">
-        <div class="card"><small>Total Units</small><div id="totalUnits">0</div></div>
-        <div class="card"><small>Online</small><div id="onlineUnits">0</div></div>
-        <div class="card"><small>Avg Latency</small><div id="avgLatency">0</div></div>
-        <div class="card"><small>Total Commands</small><div id="totalCommands">0</div></div>
-      </div>
-
-      <div class="content">
-        <div class="feed">
-          <h2>Live Command Feed</h2>
-          <div id="commands"></div>
+    <main class="main">
+      <section class="topbar">
+        <div class="card">
+          <small>Total Units</small>
+          <div id="totalUnits">0</div>
         </div>
 
-        <div class="detail">
+        <div class="card">
+          <small>Online</small>
+          <div id="onlineUnits">0</div>
+        </div>
+
+        <div class="card">
+          <small>Avg Latency</small>
+          <div id="avgLatency">0 ms</div>
+        </div>
+
+        <div class="card">
+          <small>Total Commands</small>
+          <div id="totalCommands">0</div>
+        </div>
+      </section>
+
+      <section class="content">
+        <section class="feed">
+          <div class="feed-header">
+            <h2>Live Command Feed</h2>
+
+            <div class="filter-group">
+              <button id="filterAll" class="filter-btn active">All Commands</button>
+              <button id="filterHigh" class="filter-btn">High Priority</button>
+            </div>
+          </div>
+
+          <div id="commands"></div>
+        </section>
+
+        <aside class="detail">
           <h2>Unit Details</h2>
           <div id="details"></div>
-        </div>
-      </div>
-    </div>
+
+          <h2 class="history-title">Other Units Live Command Feed</h2>
+          <div id="history"></div>
+        </aside>
+      </section>
+    </main>
   </div>
 
-  <script>
-  const API = "http://127.0.0.1:8000/api/v1";
-  const WS = "ws://127.0.0.1:8000/ws/dashboard";
-
-  let helmets = [];
-  let commands = [];
-
-  function getPriorityLabel(priority) {
-    if (priority === "high") return "High Priority";
-    if (priority === "medium") return "Operational";
-    return "Review Required";
-  }
-
-
-    async function loadInitialData() {
-      const summary = await fetch(`${API}/status/summary`).then(r => r.json());
-      helmets = await fetch(`${API}/helmets`).then(r => r.json());
-      commands = await fetch(`${API}/logs`).then(r => r.json());
-
-      renderSummary(summary);
-      renderUnits();
-      renderCommands();
-      renderDetails();
-    }
-
-    function renderSummary(summary) {
-      document.getElementById("totalUnits").textContent = summary.total_units;
-      document.getElementById("onlineUnits").textContent = summary.online_units;
-      document.getElementById("avgLatency").textContent = `${summary.avg_latency_ms} ms`;
-      document.getElementById("totalCommands").textContent = summary.total_commands;
-    }
-
-    function renderUnits() {
-      const unitsDiv = document.getElementById("units");
-      unitsDiv.innerHTML = "";
-
-      helmets.forEach(h => {
-        unitsDiv.innerHTML += `
-          <div class="unit">
-            <div><strong>${h.device_id}</strong></div>
-            <div class="${h.connection_status}">${h.connection_status}</div>
-          </div>
-        `;
-      });
-    }
-
-    function renderCommands() {
-      const commandsDiv = document.getElementById("commands");
-      commandsDiv.innerHTML = "";
-
-      commands.forEach(cmd => {
-        commandsDiv.innerHTML += `
-          <div class="command-card">
-            <div class="row">
-              <strong>${cmd.device_id}</strong>
-              <span class="${cmd.priority}">${cmd.priority}</span>
-            </div>
-            <div style="font-size:18px; font-weight:bold; margin:10px 0;">${cmd.command_type}</div>
-            <div>Source: ${cmd.source}</div>
-            <div>Confidence: ${cmd.confidence_score}</div>
-            <div style="font-size:12px; color:#b5bac1; margin-top:8px;">${cmd.timestamp}</div>
-          </div>
-        `;
-      });
-    }
-
-    function renderDetails() {
-      const detailsDiv = document.getElementById("details");
-      detailsDiv.innerHTML = "";
-
-      helmets.forEach(h => {
-        detailsDiv.innerHTML += `
-          <div class="detail-card">
-            <div><strong>${h.device_id}</strong></div>
-            <div>Status: ${h.connection_status}</div>
-            <div>Battery: ${h.battery_level}%</div>
-            <div>Signal: ${h.signal_strength}</div>
-            <div>Latency: ${h.latency_ms} ms</div>
-            <div>Temp: ${h.temperature_c} °C</div>
-          </div>
-        `;
-      });
-    }
-
-    async function refreshSummary() {
-      const summary = await fetch(`${API}/status/summary`).then(r => r.json());
-      renderSummary(summary);
-    }
-
-    function setupWebSocket() {
-      const socket = new WebSocket(WS);
-
-      socket.onopen = () => {
-        socket.send("dashboard_connected");
-      };
-
-      socket.onmessage = async (event) => {
-        const msg = JSON.parse(event.data);
-
-        if (msg.event === "new_command") {
-          commands.unshift(msg.data);
-          renderCommands();
-          await refreshSummary();
-        }
-
-        if (msg.event === "telemetry_update") {
-          const index = helmets.findIndex(h => h.device_id === msg.data.device_id);
-
-          if (index !== -1) {
-            helmets[index] = msg.data;
-          } else {
-            helmets.push(msg.data);
-          }
-
-          renderUnits();
-          renderDetails();
-          await refreshSummary();
-        }
-      };
-    }
-
-    loadInitialData();
-    setupWebSocket();
-  </script>
+  <script src="app.js?v=2"></script>
 </body>
 </html>

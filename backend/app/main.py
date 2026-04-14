@@ -1,6 +1,6 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from typing import List
+from typing import List, Optional
 from datetime import datetime, timezone
 
 from app.models import CommandPayload, TelemetryPayload
@@ -72,6 +72,7 @@ def get_status_summary():
         "offline_units": offline_units,
         "avg_latency_ms": round(avg_latency, 2),
         "total_commands": len(commands_store),
+        "active_alerts": sum(1 for cmd in commands_store if cmd["priority"] == "high"),
     }
 
 
@@ -79,10 +80,65 @@ def get_status_summary():
 def get_helmets():
     return list(telemetry_store.values())
 
+@app.get("/api/v1/helmets/{device_id}")
+def get_helmet_detail(device_id: str):
+    telemetry = telemetry_store.get(device_id)
+
+    helmet_commands = [
+        cmd for cmd in commands_store
+        if cmd["device_id"] == device_id
+    ]
+
+    return {
+        "device_id": device_id,
+        "telemetry": telemetry,
+        "recent_commands": helmet_commands[-10:][::-1],
+        "total_commands": len(helmet_commands),
+        "high_priority_count": sum(
+            1 for cmd in helmet_commands
+            if cmd["priority"] == "high"
+        )
+    }
 
 @app.get("/api/v1/logs")
 def get_logs():
     return commands_store[-50:][::-1]
+
+@app.get("/api/v1/logs/search")
+def search_logs(
+    device_id: Optional[str] = None,
+    priority: Optional[str] = None,
+    source: Optional[str] = None,
+    command_type: Optional[str] = None,
+    limit: int = 50
+):
+    filtered_logs = commands_store
+
+    if device_id:
+        filtered_logs = [
+            log for log in filtered_logs
+            if log["device_id"] == device_id
+        ]
+
+    if priority:
+        filtered_logs = [
+            log for log in filtered_logs
+            if log["priority"] == priority
+        ]
+
+    if source:
+        filtered_logs = [
+            log for log in filtered_logs
+            if log["source"] == source
+        ]
+
+    if command_type:
+        filtered_logs = [
+            log for log in filtered_logs
+            if log["command_type"] == command_type
+        ]
+
+    return filtered_logs[-limit:][::-1]
 
 
 @app.post("/api/v1/commands")

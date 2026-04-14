@@ -2,14 +2,15 @@ const API = "http://127.0.0.1:8000/api/v1";
 const WS = "ws://127.0.0.1:8000/ws/dashboard";
 
 let helmets = [];
-let commands = [];
-let selectedUnitId = null;
+let allFeedEntries = [];
+let selectedUnit = null;
 let currentFilter = "all";
 
 function getPriorityLabel(priority) {
   if (priority === "high") return "High Priority";
-  if (priority === "medium") return "Operational";
-  return "Review Required";
+  if (priority === "medium") return "Moderate Priority";
+  if (priority === "low") return "Low Priority";
+  return priority;
 }
 
 function formatCommandType(commandType) {
@@ -23,17 +24,15 @@ function formatCommandType(commandType) {
 async function loadInitialData() {
   const summary = await fetch(`${API}/status/summary`).then(r => r.json());
   helmets = await fetch(`${API}/helmets`).then(r => r.json());
-  commands = await fetch(`${API}/logs`).then(r => r.json());
+  allFeedEntries = await fetch(`${API}/logs`).then(r => r.json());
 
-  if (!selectedUnitId && helmets.length > 0) {
-    selectedUnitId = helmets[0].device_id;
-  }
+  selectedUnit = null;
 
   renderSummary(summary);
   renderUnits();
-  renderCommands();
-  renderDetails();
-  renderHistory();
+  renderCenterFeed();
+  await renderUnitDetails();
+  renderOtherUnitsHistory();
   setupFilters();
 }
 
@@ -46,51 +45,83 @@ function renderSummary(summary) {
 
 function renderUnits() {
   const unitsDiv = document.getElementById("units");
-  unitsDiv.innerHTML = "";
 
-  helmets.forEach((h) => {
-    const unitEl = document.createElement("div");
-    unitEl.classList.add("unit");
+  unitsDiv.innerHTML = `
+    <div class="unit ${selectedUnit === null ? "active-unit" : ""}" onclick="window.clearSelection()">
+      <div><strong>All Units</strong></div>
+      <div class="status-badge status-online">main screen</div>
+    </div>
+  `;
 
-    if (h.device_id === selectedUnitId) {
-      unitEl.classList.add("active-unit");
-    }
+  helmets.forEach((helmet) => {
+    const isActive = helmet.device_id === selectedUnit ? "active-unit" : "";
 
-    unitEl.innerHTML = `
-      <div><strong>${h.device_id}</strong></div>
-      <div class="status-badge status-${h.connection_status}">
-        ${h.connection_status}
+    unitsDiv.innerHTML += `
+      <div class="unit ${isActive}" onclick="window.selectUnit('${helmet.device_id}')">
+        <div><strong>${helmet.device_id}</strong></div>
+        <div class="status-badge status-${helmet.connection_status}">
+          ${helmet.connection_status}
+        </div>
       </div>
     `;
-
-    unitEl.addEventListener("click", function () {
-      selectedUnitId = h.device_id;
-      renderUnits();
-      renderDetails();
-      renderHistory();
-    });
-
-    unitsDiv.appendChild(unitEl);
   });
 }
 
-function getFilteredCommands() {
-  let filtered = [...commands];
-
-  if (currentFilter === "high") {
-    filtered = filtered.filter(cmd => cmd.priority === "high");
+window.selectUnit = async function (deviceId) {
+  if (selectedUnit === deviceId) {
+    selectedUnit = null;
+  } else {
+    selectedUnit = deviceId;
   }
 
-  return filtered;
+  renderUnits();
+  renderCenterFeed();
+  await renderUnitDetails();
+  renderOtherUnitsHistory();
+};
+window.clearSelection = async function () {
+  selectedUnit = null;
+
+  renderUnits();
+  renderCenterFeed();
+  await renderUnitDetails();
+  renderOtherUnitsHistory();
+};
+
+function getCenterFeedEntries() {
+  let feed = [...allFeedEntries];
+
+  if (selectedUnit !== null) {
+    feed = feed.filter(entry => entry.device_id === selectedUnit);
+  }
+
+  if (currentFilter === "high") {
+    feed = feed.filter(entry => entry.priority === "high");
+  }
+
+  return feed;
 }
 
-function renderCommands() {
+function getOtherUnitsHistoryEntries() {
+  if (selectedUnit === null) {
+    return [];
+  }
+
+  return allFeedEntries.filter(entry => entry.device_id !== selectedUnit);
+}
+
+function renderCenterFeed() {
   const commandsDiv = document.getElementById("commands");
   commandsDiv.innerHTML = "";
 
-  const filteredCommands = getFilteredCommands();
+  const feedEntries = getCenterFeedEntries();
 
-  filteredCommands.forEach(cmd => {
+  if (feedEntries.length === 0) {
+    commandsDiv.innerHTML = `<div class="empty-state">No commands available.</div>`;
+    return;
+  }
+
+  feedEntries.forEach(cmd => {
     commandsDiv.innerHTML += `
       <div class="command-card">
         <div class="row">
@@ -99,6 +130,7 @@ function renderCommands() {
             ${getPriorityLabel(cmd.priority)}
           </span>
         </div>
+
         <div class="command-title">${formatCommandType(cmd.command_type)}</div>
         <div>Source: ${cmd.source}</div>
         <div>Confidence: ${cmd.confidence_score}</div>
@@ -106,58 +138,76 @@ function renderCommands() {
       </div>
     `;
   });
-
-  if (filteredCommands.length === 0) {
-    commandsDiv.innerHTML = `<div class="empty-state">No commands match the selected filter.</div>`;
-  }
 }
 
-function renderDetails() {
+async function fetchHelmetDetail(deviceId) {
+  const response = await fetch(`${API}/helmets/${deviceId}`);
+  return await response.json();
+}
+
+async function renderUnitDetails() {
   const detailsDiv = document.getElementById("details");
   detailsDiv.innerHTML = "";
 
-  const selectedHelmet = helmets.find(h => h.device_id === selectedUnitId);
-
-  if (!selectedHelmet) {
-    detailsDiv.innerHTML = `<div class="empty-state">No unit selected.</div>`;
+  if (selectedUnit === null) {
+    detailsDiv.innerHTML = `
+      <div class="empty-state">
+        Select a unit to see details.
+      </div>
+    `;
     return;
   }
 
+  const detail = await fetchHelmetDetail(selectedUnit);
+
+  if (!detail.telemetry) {
+    detailsDiv.innerHTML = `<div class="empty-state">No telemetry available.</div>`;
+    return;
+  }
+
+  const h = detail.telemetry;
+
   detailsDiv.innerHTML = `
     <div class="detail-card">
-      <div><strong>${selectedHelmet.device_id}</strong></div>
-      <div>Status: ${selectedHelmet.connection_status}</div>
-      <div>Battery: ${selectedHelmet.battery_level}%</div>
-      <div>Signal: ${selectedHelmet.signal_strength}</div>
-      <div>Latency: ${selectedHelmet.latency_ms} ms</div>
-      <div>Temp: ${selectedHelmet.temperature_c} °C</div>
-      <div>Confidence: ${selectedHelmet.recognition_confidence}</div>
+      <div><strong>${detail.device_id}</strong></div>
+      <div>Status: ${h.connection_status}</div>
+      <div>Battery: ${h.battery_level}%</div>
+      <div>Signal: ${h.signal_strength}</div>
+      <div>Latency: ${h.latency_ms} ms</div>
+      <div>Temp: ${h.temperature_c} °C</div>
+      <div>Total Commands: ${detail.total_commands}</div>
+      <div>High Priority Count: ${detail.high_priority_count}</div>
     </div>
   `;
 }
 
-function renderHistory() {
+function renderOtherUnitsHistory() {
+  const historyTitle = document.querySelector(".history-title");
   const historyDiv = document.getElementById("history");
+
   historyDiv.innerHTML = "";
 
-  if (!selectedUnitId) {
-    historyDiv.innerHTML = `<div class="empty-state">No unit selected.</div>`;
+  if (selectedUnit === null) {
+    historyTitle.style.display = "none";
+    historyDiv.style.display = "none";
     return;
   }
 
-  const unitHistory = commands
-    .filter(cmd => cmd.device_id === selectedUnitId)
-    .slice(0, 8);
+  historyTitle.style.display = "block";
+  historyDiv.style.display = "block";
 
-  if (unitHistory.length === 0) {
-    historyDiv.innerHTML = `<div class="empty-state">No history available for selected unit.</div>`;
+  const otherEntries = getOtherUnitsHistoryEntries().slice(0, 20);
+
+  if (otherEntries.length === 0) {
+    historyDiv.innerHTML = `<div class="empty-state">No other unit history available.</div>`;
     return;
   }
 
-  unitHistory.forEach(cmd => {
+  otherEntries.forEach(cmd => {
     historyDiv.innerHTML += `
       <div class="history-card">
-        <div><strong>${formatCommandType(cmd.command_type)}</strong></div>
+        <div><strong>${cmd.device_id}</strong></div>
+        <div>${formatCommandType(cmd.command_type)}</div>
         <div>Source: ${cmd.source}</div>
         <div>Confidence: ${cmd.confidence_score}</div>
         <div>${getPriorityLabel(cmd.priority)}</div>
@@ -165,13 +215,6 @@ function renderHistory() {
       </div>
     `;
   });
-}
-
-function selectUnit(deviceId) {
-  selectedUnitId = deviceId;
-  renderUnits();
-  renderDetails();
-  renderHistory();
 }
 
 async function refreshSummary() {
@@ -183,18 +226,20 @@ function setupFilters() {
   const allBtn = document.getElementById("filterAll");
   const highBtn = document.getElementById("filterHigh");
 
+  if (!allBtn || !highBtn) return;
+
   allBtn.onclick = () => {
     currentFilter = "all";
     allBtn.classList.add("active");
     highBtn.classList.remove("active");
-    renderCommands();
+    renderCenterFeed();
   };
 
   highBtn.onclick = () => {
     currentFilter = "high";
     highBtn.classList.add("active");
     allBtn.classList.remove("active");
-    renderCommands();
+    renderCenterFeed();
   };
 }
 
@@ -209,9 +254,10 @@ function setupWebSocket() {
     const msg = JSON.parse(event.data);
 
     if (msg.event === "new_command") {
-      commands.unshift(msg.data);
-      renderCommands();
-      renderHistory();
+      allFeedEntries.unshift(msg.data);
+
+      renderCenterFeed();
+      renderOtherUnitsHistory();
       await refreshSummary();
     }
 
@@ -224,14 +270,18 @@ function setupWebSocket() {
         helmets.push(msg.data);
       }
 
-      if (!selectedUnitId) {
-        selectedUnitId = msg.data.device_id;
+      renderUnits();
+
+      if (selectedUnit === msg.data.device_id) {
+        await renderUnitDetails();
       }
 
-      renderUnits();
-      renderDetails();
       await refreshSummary();
     }
+  };
+
+  socket.onerror = () => {
+    console.log("WebSocket connection error");
   };
 }
 
