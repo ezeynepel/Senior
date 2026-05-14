@@ -32,18 +32,32 @@
         </div>
 
         <div class="card">
-          <small>Total Commands</small>
+          <small>Total Events</small>
           <div id="totalCommands">0</div>
         </div>
       </section>
 
       <section class="content">
         <section class="feed">
+          <div class="camera-panel">
+            <div class="feed-header">
+              <h2>Live Camera Stream</h2>
+              <span id="cameraStatus" class="status-badge status-offline">offline</span>
+            </div>
+
+            <img
+              id="cameraStream"
+              class="camera-stream"
+              src="http://127.0.0.1:8000/api/v1/camera/stream"
+              alt="Live local camera stream"
+            />
+          </div>
+
           <div class="feed-header">
-            <h2>Live Command Feed</h2>
+            <h2>Live Model Output Feed</h2>
 
             <div class="filter-group">
-              <button id="filterAll" class="filter-btn active">All Commands</button>
+              <button id="filterAll" class="filter-btn active">All Outputs</button>
               <button id="filterHigh" class="filter-btn">High Priority</button>
             </div>
           </div>
@@ -55,13 +69,13 @@
           <h2>Unit Details</h2>
           <div id="details"></div>
 
-          <h2 class="history-title">Other Units Live Command Feed</h2>
+          <h2 class="history-title">Other Units Live Model Output Feed</h2>
           <div id="history"></div>
         </aside>
       </section>
     </main>
   </div>
 
-  <script src="app.js?v=2"></script>
+  <script src="app.js?v=4"></script>
 </body>
 </html>
