@@ -8,10 +8,6 @@ let currentFilter = "all";
 let socket = null;
 let reconnectTimer = null;
 
-// Single UI-facing model state. The UI reads model-like results from here.
-// Later, the backend will update this with the real ML model output.
-let modelOutput = null;
-
 function getPriorityLabel(priority) {
   if (priority === "high") return "High Priority";
   if (priority === "medium") return "Moderate Priority";
@@ -20,7 +16,7 @@ function getPriorityLabel(priority) {
 }
 
 function formatCommandType(commandType) {
-  if (!commandType) return "Model Event";
+  if (!commandType) return "Waiting...";
   return commandType
     .toLowerCase()
     .split("_")
@@ -30,33 +26,29 @@ function formatCommandType(commandType) {
 
 async function fetchJson(path) {
   const response = await fetch(`${API}${path}`);
-  if (!response.ok) {
-    throw new Error(`Request failed: ${path} (${response.status})`);
-  }
+  if (!response.ok) throw new Error(`Request failed: ${path}`);
   return response.json();
 }
 
 async function loadInitialData() {
   try {
-    const [summary, helmetList, logs, initialModelOutput] = await Promise.all([
+    const [summary, helmetList, logs] = await Promise.all([
       fetchJson("/status/summary"),
       fetchJson("/helmets"),
       fetchJson("/logs"),
-      fetchJson("/model-output"),
     ]);
 
     helmets = helmetList;
     allFeedEntries = logs;
-    modelOutput = initialModelOutput;
     selectedUnit = null;
 
     renderSummary(summary);
-    renderModelOutput();
     renderUnits();
     renderCenterFeed();
     await renderUnitDetails();
     renderOtherUnitsHistory();
     setupFilters();
+    updateCameraStatus("online");
   } catch (error) {
     console.error(error);
     document.getElementById("commands").innerHTML = `
@@ -64,6 +56,7 @@ async function loadInitialData() {
         Backend connection failed. Start FastAPI with uvicorn main:app --reload.
       </div>
     `;
+    updateCameraStatus("offline");
   }
 }
 
@@ -71,7 +64,9 @@ function renderSummary(summary) {
   document.getElementById("totalUnits").textContent = summary.total_units ?? 0;
   document.getElementById("onlineUnits").textContent = summary.online_units ?? 0;
   document.getElementById("avgLatency").textContent = `${summary.avg_latency_ms ?? 0} ms`;
-  document.getElementById("totalCommands").textContent = summary.total_commands ?? 0;
+
+  const totalEl = document.getElementById("totalCommands") || document.getElementById("totalEvents");
+  if (totalEl) totalEl.textContent = summary.total_commands ?? 0;
 }
 
 function updateCameraStatus(status) {
@@ -80,33 +75,6 @@ function updateCameraStatus(status) {
 
   statusEl.textContent = status;
   statusEl.className = `status-badge status-${status}`;
-}
-
-function renderModelOutput() {
-  const outputDiv = document.getElementById("modelOutput");
-  if (!outputDiv) return;
-
-  if (!modelOutput) {
-    outputDiv.innerHTML = `<div class="empty-state">Waiting for model output...</div>`;
-    return;
-  }
-
-  outputDiv.innerHTML = `
-    <div class="detail-card model-output-card">
-      <div class="row">
-        <strong>Model Output</strong>
-        <span class="priority-badge priority-${modelOutput.priority}">
-          ${getPriorityLabel(modelOutput.priority)}
-        </span>
-      </div>
-      <div>Label: ${modelOutput.label}</div>
-      <div>Result: ${modelOutput.result}</div>
-      <div>Confidence: ${modelOutput.confidence}</div>
-      <div>Status: ${modelOutput.status}</div>
-      <div>Source: ${modelOutput.source}</div>
-      <div class="command-time">${modelOutput.timestamp}</div>
-    </div>
-  `;
 }
 
 function renderUnits() {
@@ -120,14 +88,13 @@ function renderUnits() {
   `;
 
   helmets.forEach((helmet) => {
-    const isActive = helmet.device_id === selectedUnit ? "active-unit" : "";
     const status = helmet.connection_status || "offline";
+    const isActive = helmet.device_id === selectedUnit ? "active-unit" : "";
 
     html += `
       <div class="unit ${isActive}" data-device="${helmet.device_id}">
         <div><strong>${helmet.device_id}</strong></div>
         <div class="status-badge status-${status}">${status}</div>
-        <div class="selected-label">${helmet.source || "model output"}</div>
       </div>
     `;
   });
@@ -177,14 +144,6 @@ function getCenterFeedEntries() {
   return feed;
 }
 
-function getOtherUnitsHistoryEntries() {
-  if (selectedUnit === null) {
-    return [];
-  }
-
-  return allFeedEntries.filter(entry => entry.device_id !== selectedUnit);
-}
-
 function renderCenterFeed() {
   const commandsDiv = document.getElementById("commands");
   commandsDiv.innerHTML = "";
@@ -192,7 +151,7 @@ function renderCenterFeed() {
   const feedEntries = getCenterFeedEntries();
 
   if (feedEntries.length === 0) {
-    commandsDiv.innerHTML = `<div class="empty-state">No model events available yet.</div>`;
+    commandsDiv.innerHTML = `<div class="empty-state">Waiting for predicted text...</div>`;
     return;
   }
 
@@ -207,13 +166,10 @@ function renderCenterFeed() {
         </div>
 
         <div class="command-title">${formatCommandType(event.command_type)}</div>
-        <div>Result: ${event.result || "N/A"}</div>
-        <div>Source: ${event.source}</div>
-        <div>Confidence: ${event.confidence_score}</div>
-        <div>Resolution: ${event.frame_width || 0}x${event.frame_height || 0}</div>
-        <div>FPS: ${event.fps ?? 0}</div>
-        <div>Latency: ${event.latency_ms ?? 0} ms</div>
-        <div class="command-time">${event.timestamp}</div>
+        <div>Source: ${event.source || "gesture"}</div>
+        <div>Confidence: ${event.confidence_score ?? "N/A"}</div>
+        <div>Status: ${event.status || "validated"}</div>
+        <div class="command-time">${event.timestamp || ""}</div>
       </div>
     `;
   });
@@ -230,34 +186,26 @@ async function renderUnitDetails() {
   if (selectedUnit === null) {
     detailsDiv.innerHTML = `
       <div class="empty-state">
-        Select a unit to see camera/model details.
+        Select a unit to see details.
       </div>
     `;
     return;
   }
 
   const detail = await fetchHelmetDetail(selectedUnit);
-
-  if (!detail.telemetry) {
-    detailsDiv.innerHTML = `<div class="empty-state">No telemetry available.</div>`;
-    return;
-  }
-
   const h = detail.telemetry;
 
   detailsDiv.innerHTML = `
     <div class="detail-card">
       <div><strong>${detail.device_id}</strong></div>
       <div>Status: ${h.connection_status}</div>
-      <div>Model Label: ${h.label}</div>
-      <div>Model Result: ${h.result}</div>
-      <div>Confidence: ${h.confidence}</div>
-      <div>Source: ${h.source}</div>
-      <div>Resolution: ${h.frame_width}x${h.frame_height}</div>
-      <div>FPS: ${h.fps}</div>
+      <div>Battery: ${h.battery_level}%</div>
+      <div>Signal: ${h.signal_strength}</div>
       <div>Latency: ${h.latency_ms} ms</div>
-      <div>Frames Captured: ${h.frames_captured}</div>
-      <div>Total Events: ${detail.total_commands}</div>
+      <div>Temp: ${h.temperature_c} °C</div>
+      <div>Recognition Confidence: ${h.recognition_confidence}</div>
+      <div>Total Outputs: ${detail.total_commands}</div>
+      <div>High Priority Count: ${detail.high_priority_count}</div>
     </div>
   `;
 }
@@ -265,6 +213,8 @@ async function renderUnitDetails() {
 function renderOtherUnitsHistory() {
   const historyTitle = document.querySelector(".history-title");
   const historyDiv = document.getElementById("history");
+
+  if (!historyTitle || !historyDiv) return;
 
   historyDiv.innerHTML = "";
 
@@ -277,7 +227,9 @@ function renderOtherUnitsHistory() {
   historyTitle.style.display = "block";
   historyDiv.style.display = "block";
 
-  const otherEntries = getOtherUnitsHistoryEntries().slice(0, 20);
+  const otherEntries = allFeedEntries
+    .filter(entry => entry.device_id !== selectedUnit)
+    .slice(0, 20);
 
   if (otherEntries.length === 0) {
     historyDiv.innerHTML = `<div class="empty-state">No other unit history available.</div>`;
@@ -289,10 +241,10 @@ function renderOtherUnitsHistory() {
       <div class="history-card">
         <div><strong>${event.device_id}</strong></div>
         <div>${formatCommandType(event.command_type)}</div>
-        <div>Result: ${event.result || "N/A"}</div>
-        <div>Confidence: ${event.confidence_score}</div>
+        <div>Source: ${event.source || "gesture"}</div>
+        <div>Confidence: ${event.confidence_score ?? "N/A"}</div>
         <div>${getPriorityLabel(event.priority)}</div>
-        <div class="command-time">${event.timestamp}</div>
+        <div class="command-time">${event.timestamp || ""}</div>
       </div>
     `;
   });
@@ -329,15 +281,11 @@ function setupWebSocket() {
 
   socket.onopen = () => {
     socket.send("dashboard_connected");
+    updateCameraStatus("online");
   };
 
   socket.onmessage = async (event) => {
     const msg = JSON.parse(event.data);
-
-    if (msg.event === "model_output_update") {
-      modelOutput = msg.data;
-      renderModelOutput();
-    }
 
     if (msg.event === "new_command") {
       allFeedEntries.unshift(msg.data);
@@ -357,7 +305,7 @@ function setupWebSocket() {
         helmets.push(msg.data);
       }
 
-      updateCameraStatus(msg.data.connection_status || "offline");
+      updateCameraStatus(msg.data.connection_status || "online");
       renderUnits();
 
       if (selectedUnit === msg.data.device_id) {
@@ -369,10 +317,11 @@ function setupWebSocket() {
   };
 
   socket.onerror = () => {
-    console.log("WebSocket connection error");
+    updateCameraStatus("offline");
   };
 
   socket.onclose = () => {
+    updateCameraStatus("offline");
     clearTimeout(reconnectTimer);
     reconnectTimer = setTimeout(setupWebSocket, 2000);
   };

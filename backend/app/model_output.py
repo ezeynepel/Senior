@@ -106,3 +106,24 @@ class MockModelOutputProvider(BaseModelOutputProvider):
                 "integration_note": "Replace MockModelOutputProvider with the real model provider later.",
             },
         )
+class RealModelOutputProvider(BaseModelOutputProvider):
+    def __init__(self, camera_source):
+        self.camera_source = camera_source
+
+    def get_output(self) -> ModelOutput:
+       def _init_(self, camera_source):
+        self.camera_source = camera_source
+
+    def get_output(self) -> ModelOutput:
+        frame = self.camera_source.get_frame()
+
+
+        # Şimdilik format örneği:
+        return ModelOutput(
+            device_id="helmet_01",
+            command_type="HOLD_POSITION",
+            source="gesture",
+            confidence_score=0.92,
+            priority="high",
+            status="validated"
+        )
