@@ -1,4 +1,16 @@
+tensorflow
+keras
+opencv-python
+numpy
+requests
+sounddevice
+soundfile
+whisperx
+imageio-ffmpeg
+
 fastapi
 uvicorn[standard]
 pydantic
-opencv-python
+
+websockets
+python-multipart

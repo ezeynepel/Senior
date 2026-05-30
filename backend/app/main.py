@@ -57,6 +57,30 @@ def get_helmets():
         }
     ]
 
+@app.get("/api/v1/helmets/{device_id}")
+def get_helmet_detail(device_id: str):
+
+    commands = [
+        cmd for cmd in event_log
+        if cmd.get("device_id") == device_id
+    ]
+
+    return {
+        "device_id": device_id,
+        "telemetry": {
+            "connection_status": "online",
+            "battery_level": 100,
+            "signal_strength": 100,
+            "latency_ms": 0,
+            "temperature_c": 0
+        },
+        "total_commands": len(commands),
+        "high_priority_count": sum(
+            1 for cmd in commands
+            if cmd.get("priority") == "high"
+        )
+    }
+
 
 @app.get("/api/v1/logs")
 def get_logs():
